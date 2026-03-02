@@ -51,9 +51,16 @@ class Tensor:
         out = Tensor(self.data @ other.data, _children=(self, other), _op="@")
 
         def _backward():
-            # dL/dA = dL/dC @ B^T,  dL/dB = A^T @ dL/dC
-            self.grad += out.grad @ other.data.T
-            other.grad += self.data.T @ out.grad
+            # General rule handles both matrix×matrix and matrix×vector:
+            # A (n,k) @ B (k,m) → C (n,m): dL/dA = dL/dC @ Bᵀ, dL/dB = Aᵀ @ dL/dC
+            # A (n,k) @ b (k,)  → c (n,):  dL/dA = outer(g, b),  dL/db = Aᵀ @ g
+            g = out.grad
+            if other.data.ndim == 1:
+                self.grad  += np.outer(g, other.data)
+                other.grad += self.data.T @ g
+            else:
+                self.grad  += g @ other.data.T
+                other.grad += self.data.T @ g
 
         out._backward = _backward
         return out
