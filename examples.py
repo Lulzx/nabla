@@ -4,7 +4,7 @@ Covers scalar, vector, matrix ops, activations, and a small neural net.
 """
 
 import numpy as np
-from autograd import Tensor, gradient_check, grad, value_and_grad
+from autograd import Tensor, gradient_check, grad, value_and_grad, cross, stack
 
 SEP = "-" * 56
 
@@ -259,6 +259,62 @@ def demo_functional_api():
           f"(expected {L * I_val[0]:.6f})")
 
 
+# ------------------------------------------------------------------ #
+# 9. Biot-Savart: ∂B/∂coil_pos via __getitem__, sqrt, cross           #
+# ------------------------------------------------------------------ #
+
+def demo_biot_savart():
+    print(SEP)
+    print("9. Biot-Savart  ∂B/∂coil_position  (gradient check)")
+
+    MU0_4PI = 1e-7
+
+    def biot_savart_B(coil_pts, field_pt):
+        """
+        Discretised Biot-Savart for a single field point.
+        coil_pts : Tensor (N, 3)   – coil segment endpoints
+        field_pt : Tensor (3,)     – observation point
+        Returns B : Tensor (3,)
+        """
+        # Segment midpoints and tangent vectors
+        dl = coil_pts[1:] - coil_pts[:-1]          # (N-1, 3)
+        mid = (coil_pts[1:] + coil_pts[:-1]) * 0.5  # (N-1, 3)
+
+        # Displacement from midpoint to field point
+        r = field_pt - mid                           # (N-1, 3)
+
+        # |r|^3  via  sqrt + pow
+        r_sq = (r * r).sum(axis=-1, keepdims=True)   # (N-1, 1)
+        r_norm = r_sq.sqrt()                          # (N-1, 1)
+        r_inv3 = r_norm ** -3                         # (N-1, 1)
+
+        # dl × r  (differentiable cross product)
+        dl_cross_r = cross(dl, r)                    # (N-1, 3)
+
+        # Sum contributions
+        B = (dl_cross_r * r_inv3).sum(axis=0) * MU0_4PI
+        return B
+
+    # Circular coil in xy-plane, field point on z-axis
+    N = 12
+    theta = np.linspace(0, 2 * np.pi, N + 1)
+    coil_np = np.stack([np.cos(theta), np.sin(theta), np.zeros(N + 1)], axis=1)
+    field_np = np.array([0.0, 0.0, 0.5])
+
+    coil = Tensor(coil_np)
+    field = Tensor(field_np)
+
+    B = biot_savart_B(coil, field)
+    print(f"   B = {B.data}  (should be ~[0, 0, positive])")
+
+    # Gradient check: ∂sum(B)/∂coil_pts
+    print("   Gradient check on coil_pts:")
+    ok = gradient_check(lambda c: biot_savart_B(c, field), coil)
+    print("   Gradient check on field_pt:")
+    ok &= gradient_check(lambda f: biot_savart_B(coil, f), field)
+    return ok
+
+
 if __name__ == "__main__":
     demo_scalar()
     demo_broadcast()
@@ -268,3 +324,4 @@ if __name__ == "__main__":
     demo_mlp_xor()
     demo_gradient_check()
     demo_functional_api()
+    demo_biot_savart()

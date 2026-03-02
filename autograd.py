@@ -133,6 +133,20 @@ class Tensor:
         return self.transpose()
 
     # ------------------------------------------------------------------ #
+    # Indexing                                                             #
+    # ------------------------------------------------------------------ #
+
+    def __getitem__(self, idx):
+        out = Tensor(self.data[idx], _children=(self,), _op="[]")
+
+        def _backward():
+            # np.add.at handles repeated indices and advanced indexing correctly
+            np.add.at(self.grad, idx, out.grad)
+
+        out._backward = _backward
+        return out
+
+    # ------------------------------------------------------------------ #
     # Activation functions                                                 #
     # ------------------------------------------------------------------ #
 
@@ -183,6 +197,9 @@ class Tensor:
 
         out._backward = _backward
         return out
+
+    def sqrt(self):
+        return self ** 0.5
 
     def softmax(self, axis=-1):
         e = np.exp(self.data - self.data.max(axis=axis, keepdims=True))
@@ -258,7 +275,38 @@ def _unbroadcast(grad, shape):
 
 
 # ------------------------------------------------------------------ #
-# Functional API  –  mx.grad(fn)(params)                              #
+# Array ops                                                            #
+# ------------------------------------------------------------------ #
+
+def stack(tensors, axis=0):
+    """Stack a sequence of Tensors along a new axis (differentiable np.stack)."""
+    out = Tensor(np.stack([t.data for t in tensors], axis=axis),
+                 _children=tuple(tensors), _op="stack")
+
+    def _backward():
+        ax = axis % out.grad.ndim
+        for i, t in enumerate(tensors):
+            idx = [slice(None)] * out.grad.ndim
+            idx[ax] = i
+            t.grad += out.grad[tuple(idx)]
+
+    out._backward = _backward
+    return out
+
+
+def cross(a, b):
+    """Differentiable 3D cross product for (..., 3) Tensors."""
+    ax, ay, az = a[..., 0], a[..., 1], a[..., 2]
+    bx, by, bz = b[..., 0], b[..., 1], b[..., 2]
+    return stack([
+        ay * bz - az * by,
+        az * bx - ax * bz,
+        ax * by - ay * bx,
+    ], axis=-1)
+
+
+# ------------------------------------------------------------------ #
+# Functional API  –  grad(fn)(params)                                 #
 # ------------------------------------------------------------------ #
 
 def grad(fn, argnums=0):
